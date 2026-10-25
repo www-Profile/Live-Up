@@ -1,0 +1,14 @@
+{
+  "name": "Live-Up",
+  "short_name": "Live-Up",
+  "description": "Развивайся каждый день: задания, привычки, характеристики и XP.",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F2F2F7",
+  "theme_color": "#2790ff",
+  "categories": ["productivity", "lifestyle", "health"]
+}
