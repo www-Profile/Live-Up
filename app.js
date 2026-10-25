@@ -75,8 +75,9 @@
   };
 
   let modalIcon = ICONS[0];
-  let modalScope = 'daily';     // 'daily' | 'day' | 'week' | 'month'
-    let modalWeekdays = [1, 3, 5];   // Пн, Ср, Чт — по умолчанию
+  let modalScope = 'today';     // 'today' | 'weekdays' | 'week' | 'month' | 'daily'
+  let modalWeekdays = [1, 3, 5];   // Пн, Ср, Пт — по умолчанию
+  let modalWeekdaysPeriod = 'forever';   // 'forever' | 'week' | 'month'
   let modalAnchorDate = startOfDay(new Date());
   let confirmCallback = null;
   let isLoggingIn = false;
@@ -110,6 +111,7 @@
     dayStrip: document.getElementById('dayStrip'),
     tasksList: document.getElementById('tasksList'),
     tasksWrap: document.getElementById('tasksWrap'),
+        tasksSectionTitle: document.getElementById('tasksSectionTitle'),
     tasksOutline: document.getElementById('tasksOutline'),
     tasksOutlineRect: document.getElementById('tasksOutlineRect'),
     modeNormal: document.getElementById('modeNormal'),
@@ -135,6 +137,9 @@
     iconPicker: document.getElementById('iconPicker'),
     scopePicker: document.getElementById('scopePicker'),
     scopeHint: document.getElementById('scopeHint'),
+    weekdayPicker: document.getElementById('weekdayPicker'),
+    weekdayPeriod: document.getElementById('weekdayPeriod'),
+    weekdayDays: document.getElementById('weekdayDays'),
 
     confirmModal: document.getElementById('confirmModal'),
     confirmBackdrop: document.getElementById('confirmBackdrop'),
@@ -158,9 +163,7 @@
 
     themeModal: document.getElementById('themeModal'),
     themeBackdrop: document.getElementById('themeBackdrop'),
-    themeClose: document.getElementById('themeClose'),
-
-        weekdayPicker: document.getElementById('weekdayPicker'),
+    themeClose: document.getElementById('themeClose')
   };
 
   /* ========== УТИЛИТЫ ДАТ ========== */
@@ -206,10 +209,21 @@
     if (scope === 'weekdays') {
       const days = Array.isArray(task.weekdays) ? task.weekdays : [];
       if (!days.length) return false;
-      return days.includes(date.getDay());
+      if (!days.includes(date.getDay())) return false;
+
+      const subPeriod = task.weekdaysPeriod || 'forever';
+      if (subPeriod === 'week') {
+        if (!task.anchor) return false;
+        return dateKey(startOfWeek(parseDateKey(task.anchor))) === dateKey(startOfWeek(date));
+      }
+      if (subPeriod === 'month') {
+        if (!task.anchor) return false;
+        return task.anchor.slice(0, 7) === dateKey(date).slice(0, 7);
+      }
+      return true;
     }
 
-    if (!task.anchor) return false;              // остальным охватам anchor обязателен
+    if (!task.anchor) return false;
 
     const k = dateKey(date);
     if (scope === 'day')   return task.anchor === k;
@@ -234,7 +248,6 @@
     const total = period === 'day' ? 1 : period === 'week' ? 7 : daysInMonth(start);
     const today = startOfDay(new Date());
 
-    // считаем только прошедшие дни периода (чтобы текущая неделя/месяц не «проваливались»)
     let count = total;
     const end = addDays(start, total - 1);
     if (end > today) {
@@ -274,6 +287,13 @@
     let streak = 0;
     while ((state.done[dateKey(d)] || []).length > 0) { streak++; d = addDays(d, -1); }
     return streak;
+  }
+
+  function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+    return many;
   }
 
   function showLoginError(msg) { el.loginError.textContent = msg; el.loginError.hidden = false; el.loginInfo.hidden = true; }
@@ -471,7 +491,8 @@
         color: iconColor(t.icon),
         scope: t.scope || 'daily',
         anchor: t.anchor || null,
-        weekdays: Array.isArray(t.weekdays) ? t.weekdays : null
+        weekdays: Array.isArray(t.weekdays) ? t.weekdays : null,
+        weekdaysPeriod: t.weekdaysPeriod || null
       });
     });
   }
@@ -488,10 +509,10 @@
     }, { merge: true });
   }
 
-  async function saveTaskToDb(title, desc, iconId, scope, anchor, weekdays, taskId = null) {
+  async function saveTaskToDb(title, desc, iconId, scope, anchor, weekdays, weekdaysPeriod, taskId = null) {
     const { collection, addDoc, doc, updateDoc } = window.fs;
     const uid = state.user.id;
-    const payload = { title, description: desc || 'Личное задание', icon: iconId, scope, anchor, weekdays };
+    const payload = { title, description: desc || 'Личное задание', icon: iconId, scope, anchor, weekdays, weekdaysPeriod };
 
     if (taskId) {
       await updateDoc(doc(window.firebaseDb, "users", uid, "tasks", taskId), payload);
@@ -506,7 +527,7 @@
   }
 
   async function deleteAllTasks() {
-    const { collection, getDocs, doc, deleteDoc, getDoc, setDoc } = window.fs;
+    const { collection, getDocs, doc, deleteDoc } = window.fs;
     const uid = state.user.id;
 
     const tasksRef = collection(window.firebaseDb, "users", uid, "tasks");
@@ -518,7 +539,6 @@
       await deleteDoc(doc(window.firebaseDb, "users", uid, "tasks", id));
     }
 
-    // чистим отметки выполнения от удалённых задач
     Object.keys(state.done).forEach(k => {
       state.done[k] = state.done[k].filter(id => !ids.includes(id));
       if (!state.done[k].length) delete state.done[k];
@@ -539,7 +559,6 @@
 
     if (toAdd.length === 0) return 0;
 
-    // стартовые задания создаются только на сегодняшний день
     const todayKey = dateKey(new Date());
 
     for (const st of toAdd) {
@@ -601,107 +620,154 @@
       btn.classList.toggle('period-btn--active', btn.dataset.period === state.viewPeriod));
   }
 
-function renderDayCards() {
-  const period = state.viewPeriod;
-  const cur = periodStart(period, state.selectedDate);
-  const anchors = [shiftPeriodDate(period, cur, -1), cur, shiftPeriodDate(period, cur, 1)];
-  const today = startOfDay(new Date());
+  function renderDayCards() {
+    const period = state.viewPeriod;
+    const cur = periodStart(period, state.selectedDate);
+    const anchors = [
+      shiftPeriodDate(period, cur, -1),
+      cur,
+      shiftPeriodDate(period, cur, 1),
+      shiftPeriodDate(period, cur, 2)
+    ];
+    const today = startOfDay(new Date());
 
-  el.dayCards.innerHTML = anchors.map(d => {
-    const pct = periodPercent(period, d);
-    const active = dateKey(d) === dateKey(cur);
+    el.dayCards.innerHTML = anchors.map((d, idx) => {
+      const active = dateKey(d) === dateKey(cur);
 
-    let dateText = '';
-    let label = '';
-    let isToday = false;
+      let dateText = '';
+      let label = '';
+      let isToday = false;
+
+      if (period === 'day') {
+        dateText = formatShortDate(d);
+        const diff = Math.round((startOfDay(d) - today) / 86400000);
+        label = diff === -1 ? 'вчера'
+              : diff === 0  ? 'сегодня'
+              : diff === 1  ? 'завтра'
+              : diff === 2  ? 'послезавтра'
+              : '';
+        isToday = diff === 0;
+      } else if (period === 'week') {
+        dateText = formatRange(d, addDays(d, 6));
+        isToday = dateKey(startOfWeek(today)) === dateKey(d);
+        label = isToday ? 'эта неделя' : '';
+      } else {
+        dateText = MONTHS_FULL[d.getMonth()];
+        isToday = dateKey(startOfMonth(today)) === dateKey(d);
+        if (d.getFullYear() !== today.getFullYear()) label = String(d.getFullYear());
+        else if (isToday) label = 'этот месяц';
+      }
+
+      const showPreview = (idx >= 1) && !active && !isToday;
+      const pct = periodPercent(period, d);
+
+      let bodyHtml;
+      if (showPreview) {
+        bodyHtml = renderCardTasksPreview(period, d);
+      } else {
+        bodyHtml = `<div class="day-card__ring">
+          <svg viewBox="0 0 44 44">
+            <circle cx="22" cy="22" r="18" fill="none" style="stroke: var(--progress-bg)" stroke-width="3.5"></circle>
+            <circle cx="22" cy="22" r="18" fill="none" stroke="#007AFF" stroke-width="3.5"
+              stroke-linecap="round" stroke-dasharray="${2*Math.PI*18}"
+              stroke-dashoffset="${2*Math.PI*18*(1-pct/100)}" transform="rotate(-90 22 22)"></circle>
+          </svg>
+          <span class="day-card__pct">${pct}%</span>
+        </div>`;
+      }
+
+      const cls = [
+        'day-card',
+        active ? 'day-card--active' : '',
+        period !== 'day' ? 'day-card--period' : '',
+        isToday ? 'day-card--today' : '',
+        showPreview ? 'day-card--preview' : ''
+      ].filter(Boolean).join(' ');
+
+      return `<div class="${cls}" data-date="${dateKey(d)}">
+        <div class="day-card__date">${dateText}</div>
+        <div class="day-card__label">${label}</div>
+        ${bodyHtml}
+      </div>`;
+    }).join('');
+
+    el.dayCards.querySelectorAll('.day-card').forEach(card => {
+      card.addEventListener('click', () => {
+        state.selectedDate = parseDateKey(card.dataset.date);
+        renderTasksPage();
+      });
+    });
+  }
+
+  function renderCardTasksPreview(period, anchor) {
+    const dateForList = period === 'day' ? anchor : anchor;
+    const key = dateKey(dateForList);
+    const list = tasksForDate(dateForList);
+
+    if (!list.length) {
+      return `<div class="day-card__empty"><i class="fa-solid fa-mug-hot"></i></div>`;
+    }
+
+    const doneList = state.done[key] || [];
+    const shown = list.slice(0, 2);
+    const rest = list.length - shown.length;
+
+    const itemsHtml = shown.map(t => {
+      const done = doneList.includes(t.id);
+      return `<div class="day-card__task ${done ? 'day-card__task--done' : ''}">
+        <span class="day-card__dot" style="--dot-color:${iconColor(t.icon)}"></span>
+        <span class="day-card__task-title">${t.title}</span>
+      </div>`;
+    }).join('');
+
+    const moreHtml = rest > 0
+      ? `<div class="day-card__more">и ещё ${rest} ${plural(rest, 'задание', 'задания', 'заданий')}</div>`
+      : '';
+
+    return `<div class="day-card__tasks">${itemsHtml}${moreHtml}</div>`;
+  }
+
+  function renderDayStrip() {
+    const period = state.viewPeriod;
 
     if (period === 'day') {
-      dateText = formatShortDate(d);
-      const diff = Math.round((startOfDay(d) - today) / 86400000);
-      label = diff === 0 ? 'сегодня' : diff === -1 ? 'вчера' : diff === 1 ? 'завтра' : '';
-      isToday = diff === 0;
-    } else if (period === 'week') {
-      dateText = formatRange(d, addDays(d, 6));
-      isToday = dateKey(startOfWeek(today)) === dateKey(d);
-      label = isToday ? 'эта неделя' : '';
-    } else {
-      dateText = MONTHS_FULL[d.getMonth()];
-      isToday = dateKey(startOfMonth(today)) === dateKey(d);
-      if (d.getFullYear() !== today.getFullYear()) label = String(d.getFullYear());
-      else if (isToday) label = 'этот месяц';
+      el.dayStrip.hidden = true;
+      el.dayStrip.innerHTML = '';
+      el.dayStrip.classList.remove('day-strip--week', 'day-strip--month');
+      return;
     }
 
-    const cls = [
-      'day-card',
-      active ? 'day-card--active' : '',
-      period !== 'day' ? 'day-card--period' : '',
-      isToday ? 'day-card--today' : ''
-    ].filter(Boolean).join(' ');
+    const start = periodStart(period, state.selectedDate);
+    const count = period === 'week' ? 7 : daysInMonth(start);
+    const selKey = dateKey(state.selectedDate);
+    const todayKey = dateKey(new Date());
 
-    return `<div class="${cls}" data-date="${dateKey(d)}">
-      <div class="day-card__date">${dateText}</div>
-      <div class="day-card__label">${label}</div>
-      <div class="day-card__ring">
-        <svg viewBox="0 0 44 44">
-          <circle cx="22" cy="22" r="18" fill="none" style="stroke: var(--progress-bg)" stroke-width="3.5"></circle>
-          <circle cx="22" cy="22" r="18" fill="none" stroke="#007AFF" stroke-width="3.5"
-            stroke-linecap="round" stroke-dasharray="${2*Math.PI*18}"
-            stroke-dashoffset="${2*Math.PI*18*(1-pct/100)}" transform="rotate(-90 22 22)"></circle>
-        </svg>
-        <span class="day-card__pct">${pct}%</span>
-      </div>
-    </div>`;
-  }).join('');
+    el.dayStrip.hidden = false;
+    el.dayStrip.classList.toggle('day-strip--week', period === 'week');
+    el.dayStrip.classList.toggle('day-strip--month', period === 'month');
 
-  el.dayCards.querySelectorAll('.day-card').forEach(card => {
-    card.addEventListener('click', () => {
-      state.selectedDate = parseDateKey(card.dataset.date);
-      renderTasksPage();
-    });
-  });
-}
+    el.dayStrip.innerHTML = Array.from({ length: count }, (_, i) => {
+      const d = addDays(start, i);
+      const k = dateKey(d);
+      const pct = dayPercent(k);
+      const cls = ['day-chip'];
+      if (k === selKey) cls.push('day-chip--active');
+      if (k === todayKey) cls.push('day-chip--today');
 
-function renderDayStrip() {
-  const period = state.viewPeriod;
+      return `<button class="${cls.join(' ')}" data-date="${k}">
+        <span class="day-chip__dow">${DOW[d.getDay()]}</span>
+        <span class="day-chip__num">${d.getDate()}</span>
+        <span class="day-chip__bar"><i style="width:${pct}%"></i></span>
+      </button>`;
+    }).join('');
 
-  if (period === 'day') {
-    el.dayStrip.hidden = true;
-    el.dayStrip.innerHTML = '';
-    el.dayStrip.classList.remove('day-strip--week', 'day-strip--month');
-    return;
-  }
-
-  const start = periodStart(period, state.selectedDate);
-  const count = period === 'week' ? 7 : daysInMonth(start);
-  const selKey = dateKey(state.selectedDate);
-  const todayKey = dateKey(new Date());
-
-  el.dayStrip.hidden = false;
-  el.dayStrip.classList.toggle('day-strip--week', period === 'week');
-  el.dayStrip.classList.toggle('day-strip--month', period === 'month');
-
-  el.dayStrip.innerHTML = Array.from({ length: count }, (_, i) => {
-    const d = addDays(start, i);
-    const k = dateKey(d);
-    const pct = dayPercent(k);
-    const cls = ['day-chip'];
-    if (k === selKey) cls.push('day-chip--active');
-    if (k === todayKey) cls.push('day-chip--today');
-
-    return `<button class="${cls.join(' ')}" data-date="${k}">
-      <span class="day-chip__dow">${DOW[d.getDay()]}</span>
-      <span class="day-chip__num">${d.getDate()}</span>
-      <span class="day-chip__bar"><i style="width:${pct}%"></i></span>
-    </button>`;
-  }).join('');
-
-  if (period === 'month') {
-    const activeChip = el.dayStrip.querySelector('.day-chip--active');
-    if (activeChip) {
-      el.dayStrip.scrollLeft = activeChip.offsetLeft - el.dayStrip.clientWidth / 2 + activeChip.offsetWidth / 2;
+    if (period === 'month') {
+      const activeChip = el.dayStrip.querySelector('.day-chip--active');
+      if (activeChip) {
+        el.dayStrip.scrollLeft = activeChip.offsetLeft - el.dayStrip.clientWidth / 2 + activeChip.offsetWidth / 2;
+      }
     }
   }
-}
 
   function taskTag(t) {
     const scope = taskScope(t);
@@ -713,13 +779,46 @@ function renderDayStrip() {
       const list = order.filter(d => (t.weekdays || []).includes(d)).map(d => names[d]);
       return list.length ? list.join(', ') : 'дни недели';
     }
-    if (scope === 'day' && state.viewPeriod !== 'day') return formatShortDate(parseDateKey(t.anchor));
+    if (scope === 'day') {
+      const isToday = t.anchor === dateKey(new Date());
+      if (isToday) return state.viewPeriod === 'day' ? '' : 'сегодня';
+      return state.viewPeriod !== 'day' ? formatShortDate(parseDateKey(t.anchor)) : '';
+    }
     return '';
   }
 
+  function tasksForPeriod(period, date) {
+    const start = periodStart(period, date);
+    const count = period === 'week' ? 7 : daysInMonth(start);
+    const seen = new Set();
+    const result = [];
+    for (let i = 0; i < count; i++) {
+      const d = addDays(start, i);
+      for (const t of tasksForDate(d)) {
+        if (!seen.has(t.id)) {
+          seen.add(t.id);
+          result.push(t);
+        }
+      }
+    }
+    return result;
+  }
+
+  function isTaskDoneInPeriod(task, period, date) {
+    const start = periodStart(period, date);
+    const count = period === 'week' ? 7 : daysInMonth(start);
+    for (let i = 0; i < count; i++) {
+      if (isDone(dateKey(addDays(start, i)), task.id)) return true;
+    }
+    return false;
+  }
+
   function renderTasksList() {
+    const isPeriod = state.viewPeriod === 'week' || state.viewPeriod === 'month';
     const key = dateKey(state.selectedDate);
-    const list = tasksForDate(state.selectedDate);
+    const list = isPeriod
+      ? tasksForPeriod(state.viewPeriod, state.selectedDate)
+      : tasksForDate(state.selectedDate);
 
     if (!list.length) {
       if (!state.tasks.length) {
@@ -731,7 +830,7 @@ function renderDayStrip() {
       } else {
         el.tasksList.innerHTML = `<li class="empty">
           <div class="empty__icon"><i class="fa-solid fa-mug-hot"></i></div>
-          <div class="empty__title">На этот день заданий нет</div>
+          <div class="empty__title">${isPeriod ? 'Заданий за период нет' : 'На этот день заданий нет'}</div>
         </li>`;
       }
       el.tasksList.classList.remove('tasks--editing');
@@ -739,7 +838,9 @@ function renderDayStrip() {
     }
 
     el.tasksList.innerHTML = list.map(t => {
-      const done = isDone(key, t.id);
+      const done = isPeriod
+        ? isTaskDoneInPeriod(t, state.viewPeriod, state.selectedDate)
+        : isDone(key, t.id);
       const iconClass = state.editMode ? 'fa-pen' : 'fa-check';
       const tag = taskTag(t);
       return `<li class="task ${done ? 'task--done' : ''}" data-id="${t.id}">
@@ -773,10 +874,44 @@ function renderDayStrip() {
     el.tasksOutlineRect.setAttribute('ry', '28');
   }
 
+  function renderTasksSectionTitle() {
+    const node = el.tasksSectionTitle;
+    if (!node) return;
+
+    const period = state.viewPeriod;
+    const today = startOfDay(new Date());
+    const selected = startOfDay(state.selectedDate);
+
+    let body = '';
+
+    if (period === 'week') {
+      const s = startOfWeek(selected);
+      const e = addDays(s, 6);
+      body = `НЕДЕЛЮ <span class="section-title__sub">${formatRange(s, e)}</span>`;
+    } else if (period === 'month') {
+      body = MONTHS_FULL[selected.getMonth()].toUpperCase();
+    } else {
+      const diff = Math.round((selected - today) / 86400000);
+      let dayLabel = '';
+      if (diff === -1) dayLabel = 'ВЧЕРА';
+      else if (diff === 0) dayLabel = 'СЕГОДНЯ';
+      else if (diff === 1) dayLabel = 'ЗАВТРА';
+      else if (diff === 2) dayLabel = 'ПОСЛЕЗАВТРА';
+
+      const dateStr = formatShortDate(selected);
+      body = dayLabel
+        ? `${dayLabel} <span class="section-title__sub">${dateStr}</span>`
+        : `<span class="section-title__sub">${dateStr}</span>`;
+    }
+
+    node.innerHTML = 'СПИСОК ЗАДАНИЙ НА ' + body;
+  }
+
   function renderTasksPage() {
     renderPeriodSwitch();
     renderDayCards();
     renderDayStrip();
+    renderTasksSectionTitle();
     renderTasksList();
     updateModeButtons();
     if (el.tasksWrap) el.tasksWrap.classList.toggle('tasks-wrap--editing', state.editMode);
@@ -828,11 +963,18 @@ function renderDayStrip() {
       el.modalTitle.value = task.title;
       el.modalDesc.value = task.desc;
       modalIcon = ICONS.find(i => i.id === task.icon) || { id: task.icon, color: iconColor(task.icon) };
-      modalScope = taskScope(task);
+
+      // сохраняем «реальный» scope для вычисления anchor'а
+      const realScope = taskScope(task);
+      modalScope = realScope === 'day' ? 'today' : realScope;
+
+      // при редактировании «Сегодня» держим anchor, чтобы не перезаписывать дату
       modalAnchorDate = task.anchor ? parseDateKey(task.anchor) : startOfDay(state.selectedDate);
       modalWeekdays = Array.isArray(task.weekdays) && task.weekdays.length
         ? task.weekdays.slice()
         : [1, 3, 5];
+        modalWeekdaysPeriod = task.weekdaysPeriod || 'forever';
+
       el.modalDelete.hidden = false;
       el.modalTitleText.textContent = 'Редактировать задание';
     } else {
@@ -842,9 +984,10 @@ function renderDayStrip() {
       modalIcon = ICONS[0];
       modalScope = state.viewPeriod === 'week' ? 'week'
                  : state.viewPeriod === 'month' ? 'month'
-                 : 'daily';
+                 : 'today';
       modalAnchorDate = startOfDay(state.selectedDate);
       modalWeekdays = [1, 3, 5];
+            modalWeekdaysPeriod = 'forever';
       el.modalDelete.hidden = true;
       el.modalTitleText.textContent = 'Новое задание';
     }
@@ -858,8 +1001,8 @@ function renderDayStrip() {
 
   function scopeHintText() {
     const d = modalAnchorDate;
+    if (modalScope === 'today') return 'Только на ' + formatLongDate(modalAnchorDate);
     if (modalScope === 'daily') return 'Задание будет появляться каждый день';
-    if (modalScope === 'day') return formatLongDate(d);
     if (modalScope === 'week') {
       const s = startOfWeek(d);
       const e = addDays(s, 6);
@@ -869,7 +1012,17 @@ function renderDayStrip() {
       const names = { 0: 'вс', 1: 'пн', 2: 'вт', 3: 'ср', 4: 'чт', 5: 'пт', 6: 'сб' };
       const order = [1, 2, 3, 4, 5, 6, 0];
       const list = order.filter(d => modalWeekdays.includes(d)).map(d => names[d]);
-      return list.length ? 'Каждую ' + list.join(', ') : 'Выберите хотя бы один день';
+      if (!list.length) return 'Выберите хотя бы один день';
+
+      if (modalWeekdaysPeriod === 'week') {
+        const s = startOfWeek(modalAnchorDate);
+        const e = addDays(s, 6);
+        return `Каждую ${list.join(', ')} на этой неделе (${s.getDate()}–${e.getDate()} ${MONTHS[e.getMonth()]})`;
+      }
+      if (modalWeekdaysPeriod === 'month') {
+        return `Каждую ${list.join(', ')} в ${MONTHS_FULL[modalAnchorDate.getMonth()].toLowerCase()}`;
+      }
+      return 'Каждую ' + list.join(', ');
     }
     return `${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}`;
   }
@@ -883,7 +1036,10 @@ function renderDayStrip() {
       const show = modalScope === 'weekdays';
       el.weekdayPicker.hidden = !show;
       if (show) {
-        el.weekdayPicker.querySelectorAll('.weekday-option').forEach(btn => {
+        el.weekdayPeriod.querySelectorAll('.weekday-period-option').forEach(btn =>
+          btn.classList.toggle('weekday-period-option--active', btn.dataset.period === modalWeekdaysPeriod));
+
+        el.weekdayDays.querySelectorAll('.weekday-option').forEach(btn => {
           const d = Number(btn.dataset.dow);
           btn.classList.toggle('weekday-option--active', modalWeekdays.includes(d));
         });
@@ -924,7 +1080,31 @@ function renderDayStrip() {
     }
 
     const weekdays = scope === 'weekdays' ? modalWeekdays.slice().sort() : null;
-    const anchor = (scope === 'daily' || scope === 'weekdays') ? null : dateKey(modalAnchorDate);
+
+    let anchor;
+    let weekdaysPeriod = null;
+
+    if (scope === 'daily') {
+      anchor = null;
+    } else if (scope === 'weekdays') {
+      weekdaysPeriod = modalWeekdaysPeriod || 'forever';
+      if (weekdaysPeriod === 'week') {
+        anchor = dateKey(startOfWeek(modalAnchorDate));
+      } else if (weekdaysPeriod === 'month') {
+        anchor = dateKey(startOfMonth(modalAnchorDate));
+      } else {
+        anchor = null;
+      }
+    } else if (scope === 'today') {
+      const editing = state.editingTaskId && state.tasks.find(t => t.id === state.editingTaskId);
+      anchor = (editing && taskScope(editing) === 'day' && editing.anchor)
+        ? editing.anchor
+        : dateKey(modalAnchorDate);
+    } else {
+      anchor = dateKey(modalAnchorDate);
+    }
+
+    const dbScope = scope === 'today' ? 'day' : scope;
     const editId = state.editingTaskId;
 
     if (editId) {
@@ -934,13 +1114,14 @@ function renderDayStrip() {
         task.desc = desc || 'Личное задание';
         task.icon = icon.id;
         task.color = iconColor(icon.id);
-        task.scope = scope;
+        task.scope = dbScope;
         task.anchor = anchor;
         task.weekdays = weekdays;
+        task.weekdaysPeriod = weekdaysPeriod;
       }
       closeModal();
       renderTasksPage();
-      saveTaskToDb(title, desc, icon.id, scope, anchor, weekdays, editId).catch(console.error);
+      saveTaskToDb(title, desc, icon.id, dbScope, anchor, weekdays, weekdaysPeriod, editId).catch(console.error);
     } else {
       closeModal();
       const { collection, addDoc } = window.fs;
@@ -949,14 +1130,15 @@ function renderDayStrip() {
         title,
         description: desc || 'Личное задание',
         icon: icon.id,
-        scope,
+        scope: dbScope,
         anchor,
-        weekdays
+        weekdays,
+        weekdaysPeriod
       });
       state.tasks.push({
         id: ref.id, title, desc: desc || 'Личное задание',
         icon: icon.id, color: iconColor(icon.id),
-        scope, anchor, weekdays
+        scope: dbScope, anchor, weekdays, weekdaysPeriod
       });
       renderTasksPage();
     }
@@ -1082,8 +1264,6 @@ function renderDayStrip() {
 
   function closeConfirm() { el.confirmModal.hidden = true; confirmCallback = null; }
 
-  function closeConfirm() { el.confirmModal.hidden = true; confirmCallback = null; }
-
   function bindConfirm() {
     el.confirmClose.addEventListener('click', closeConfirm);
     el.confirmBackdrop.addEventListener('click', closeConfirm);
@@ -1105,29 +1285,10 @@ function renderDayStrip() {
 
   /* ========== СОБЫТИЯ ========== */
   function bindEvents() {
-    // Переключатель периода
     el.periodSwitch.addEventListener('click', e => {
       const btn = e.target.closest('.period-btn');
       if (!btn) return;
       state.viewPeriod = btn.dataset.period;
-      renderTasksPage();
-    });
-
-    // Стрелки — шаг равен выбранному периоду
-    document.getElementById('prevDay').addEventListener('click', () => {
-      state.selectedDate = shiftPeriodDate(state.viewPeriod, state.selectedDate, -1);
-      renderTasksPage();
-    });
-    document.getElementById('nextDay').addEventListener('click', () => {
-      state.selectedDate = shiftPeriodDate(state.viewPeriod, state.selectedDate, 1);
-      renderTasksPage();
-    });
-
-    // Полоса дней внутри недели / месяца
-    el.dayStrip.addEventListener('click', e => {
-      const chip = e.target.closest('.day-chip');
-      if (!chip) return;
-      state.selectedDate = parseDateKey(chip.dataset.date);
       renderTasksPage();
     });
 
@@ -1138,9 +1299,54 @@ function renderDayStrip() {
       if (state.editMode) { openModal(taskEl.dataset.id); return; }
 
       const today = startOfDay(new Date());
+
+      if (state.viewPeriod === 'week' || state.viewPeriod === 'month') {
+        const task = state.tasks.find(t => t.id === taskEl.dataset.id);
+        if (!task) return;
+
+        const start = periodStart(state.viewPeriod, state.selectedDate);
+        const count = state.viewPeriod === 'week' ? 7 : daysInMonth(start);
+
+        // уже выполнена хотя бы раз — снимаем со всех дней периода
+        if (isTaskDoneInPeriod(task, state.viewPeriod, state.selectedDate)) {
+          for (let i = 0; i < count; i++) {
+            const k = dateKey(addDays(start, i));
+            if (isDone(k, task.id)) toggleTask(k, task.id);
+          }
+          return;
+        }
+
+        // не выполнена — ставим на первый доступный (не будущий) день периода
+        const selected = startOfDay(state.selectedDate);
+        if (taskAppliesToDate(task, selected)) {
+          if (selected > today) return;
+          if (selected < today) {
+            askConfirm('Предыдущий день', 'Это задание из прошлого дня. Вы уверены, что хотите изменить его статус?',
+              () => toggleTask(dateKey(selected), task.id));
+            return;
+          }
+          toggleTask(dateKey(selected), task.id);
+          return;
+        }
+
+        for (let i = 0; i < count; i++) {
+          const d = addDays(start, i);
+          if (!taskAppliesToDate(task, d)) continue;
+          if (d > today) continue;
+          if (d < today) {
+            askConfirm('Предыдущий день', 'Это задание из прошлого дня. Вы уверены, что хотите изменить его статус?',
+              () => toggleTask(dateKey(d), task.id));
+            return;
+          }
+          toggleTask(dateKey(d), task.id);
+          return;
+        }
+        return;
+      }
+
+      // режим «День» — как было
       const selected = startOfDay(state.selectedDate);
       if (selected > today) return;
-
       if (selected < today) {
         askConfirm(
           'Предыдущий день',
@@ -1156,7 +1362,7 @@ function renderDayStrip() {
     document.getElementById('editModeBtn').addEventListener('click', enterEditMode);
     document.getElementById('cancelEditBtn').addEventListener('click', () => exitEditMode(false));
     document.getElementById('saveEditBtn').addEventListener('click', () => exitEditMode(true));
-        // Выбор типа повторения (Всегда / День / Неделя / Месяц / Дни недели)
+
     el.scopePicker.querySelectorAll('.scope-option').forEach(btn => {
       btn.addEventListener('click', () => {
         modalScope = btn.dataset.scope;
@@ -1164,15 +1370,22 @@ function renderDayStrip() {
       });
     });
 
-    // Клики по дням недели — один раз при инициализации
     if (el.weekdayPicker) {
       el.weekdayPicker.addEventListener('click', e => {
-        const btn = e.target.closest('.weekday-option');
-        if (!btn) return;
-        const d = Number(btn.dataset.dow);
-        if (modalWeekdays.includes(d)) modalWeekdays = modalWeekdays.filter(x => x !== d);
-        else modalWeekdays.push(d);
-        renderScopePicker();
+        const dayBtn = e.target.closest('.weekday-option');
+        if (dayBtn) {
+          const d = Number(dayBtn.dataset.dow);
+          if (modalWeekdays.includes(d)) modalWeekdays = modalWeekdays.filter(x => x !== d);
+          else modalWeekdays.push(d);
+          renderScopePicker();
+          return;
+        }
+
+        const perBtn = e.target.closest('.weekday-period-option');
+        if (perBtn) {
+          modalWeekdaysPeriod = perBtn.dataset.period;
+          renderScopePicker();
+        }
       });
     }
 
@@ -1205,13 +1418,9 @@ function renderDayStrip() {
     });
 
     el.settingsLogout.addEventListener('click', () => {
-      askConfirm(
-        'Выход',
-        'Точно вы хотите выйти из аккаунта?',
-        logout,
-        { danger: true }
-      );
+      askConfirm('Выход', 'Точно вы хотите выйти из аккаунта?', logout, { danger: true });
     });
+
     el.settingsDeleteTasks.addEventListener('click', () => {
       askConfirm(
         'Удалить все задания',

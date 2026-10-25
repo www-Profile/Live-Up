@@ -76,7 +76,6 @@
 
       <!-- ЗАДАНИЯ -->
       <section class="screen screen--active" data-screen="tasks">
-        <h1 class="page-title">Задания</h1>
 
         <!-- Период -->
         <div class="period-switch" id="periodSwitch">
@@ -86,18 +85,13 @@
         </div>
 
         <div class="day-nav">
-          <button class="day-arrow" id="prevDay" aria-label="Назад">
-            <i class="fa-solid fa-chevron-left"></i>
-          </button>
           <div class="day-cards" id="dayCards"></div>
-          <button class="day-arrow" id="nextDay" aria-label="Вперёд">
-            <i class="fa-solid fa-chevron-right"></i>
-          </button>
         </div>
 
         <!-- Полоса дней внутри недели/месяца -->
         <div class="day-strip" id="dayStrip" hidden></div>
 
+        <div class="section-title" id="tasksSectionTitle"></div>
         <div class="tasks-wrap" id="tasksWrap">
           <ul class="tasks" id="tasksList"></ul>
         </div>
@@ -215,11 +209,11 @@
       <textarea class="field field--area" id="modalDesc" placeholder="Описание" maxlength="140"></textarea>
       <div class="modal__label">Повторение</div>
       <div class="scope-picker" id="scopePicker">
-        <button type="button" class="scope-option" data-scope="daily">
-          <i class="fa-solid fa-infinity"></i><span>Всегда</span>
+        <button type="button" class="scope-option" data-scope="today">
+          <i class="fa-solid fa-calendar-day"></i><span>В этот день</span>
         </button>
-        <button type="button" class="scope-option" data-scope="day">
-          <i class="fa-solid fa-calendar-day"></i><span>День</span>
+        <button type="button" class="scope-option" data-scope="weekdays">
+          <i class="fa-solid fa-calendar-check"></i><span>Дни недели</span>
         </button>
         <button type="button" class="scope-option" data-scope="week">
           <i class="fa-solid fa-calendar-week"></i><span>Неделя</span>
@@ -227,20 +221,26 @@
         <button type="button" class="scope-option" data-scope="month">
           <i class="fa-solid fa-calendar-days"></i><span>Месяц</span>
         </button>
-        <button type="button" class="scope-option" data-scope="weekdays">
-          <i class="fa-solid fa-calendar-check"></i><span>Дни недели</span>
+        <button type="button" class="scope-option" data-scope="daily">
+          <i class="fa-solid fa-infinity"></i><span>Всегда</span>
         </button>
       </div>
-
       <!-- выбор конкретных дней недели -->
       <div class="weekday-picker" id="weekdayPicker" hidden>
-        <button type="button" class="weekday-option" data-dow="1">Пн</button>
-        <button type="button" class="weekday-option" data-dow="2">Вт</button>
-        <button type="button" class="weekday-option" data-dow="3">Ср</button>
-        <button type="button" class="weekday-option" data-dow="4">Чт</button>
-        <button type="button" class="weekday-option" data-dow="5">Пт</button>
-        <button type="button" class="weekday-option" data-dow="6">Сб</button>
-        <button type="button" class="weekday-option" data-dow="0">Вс</button>
+        <div class="weekday-period" id="weekdayPeriod">
+          <button type="button" class="weekday-period-option" data-period="forever">Всегда</button>
+          <button type="button" class="weekday-period-option" data-period="week">В эту неделю</button>
+          <button type="button" class="weekday-period-option" data-period="month">В этот месяц</button>
+        </div>
+        <div class="weekday-days" id="weekdayDays">
+          <button type="button" class="weekday-option" data-dow="1">Пн</button>
+          <button type="button" class="weekday-option" data-dow="2">Вт</button>
+          <button type="button" class="weekday-option" data-dow="3">Ср</button>
+          <button type="button" class="weekday-option" data-dow="4">Чт</button>
+          <button type="button" class="weekday-option" data-dow="5">Пт</button>
+          <button type="button" class="weekday-option" data-dow="6">Сб</button>
+          <button type="button" class="weekday-option" data-dow="0">Вс</button>
+        </div>
       </div>
 
       <div class="scope-hint" id="scopeHint"></div>
